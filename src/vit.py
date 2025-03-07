@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 class PatchEmbedding(nn.Module):
-    """ 将输入图像转换为 Patch 并进行嵌入 """
     def __init__(self, img_size=64, patch_size=8, in_channels=3, embed_dim=512):
         super().__init__()
         self.patch_size = patch_size
@@ -16,11 +15,10 @@ class PatchEmbedding(nn.Module):
         x = self.proj(x).flatten(2).transpose(1, 2)  # (B, num_patches, embed_dim)
         cls_tokens = self.cls_token.expand(B, -1, -1)  # (B, 1, embed_dim)
         x = torch.cat([cls_tokens, x], dim=1)  # (B, num_patches+1, embed_dim)
-        x = x + self.pos_embed  # 添加位置编码
+        x = x + self.pos_embed 
         return x
 
 class MultiheadSelfAttention(nn.Module):
-    """ 多头自注意力 """
     def __init__(self, embed_dim, num_heads):
         super().__init__()
         self.num_heads = num_heads
@@ -33,14 +31,13 @@ class MultiheadSelfAttention(nn.Module):
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # 分离 Q, K, V
+        q, k, v = qkv[0], qkv[1], qkv[2] 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
         x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         return self.proj(x)
 
 class TransformerEncoder(nn.Module):
-    """ Transformer 编码器 """
     def __init__(self, embed_dim, num_heads, mlp_dim, dropout=0.1):
         super().__init__()
         self.norm1 = nn.LayerNorm(embed_dim)
@@ -68,7 +65,7 @@ class ViT(nn.Module):
         self.head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x):
-        x = self.patch_embed(x)  # Patch 处理
-        x = self.encoder(x)  # 通过 Transformer 层
-        x = self.norm(x[:, 0])  # 仅取 cls_token
+        x = self.patch_embed(x)  
+        x = self.encoder(x) 
+        x = self.norm(x[:, 0])  
         return self.head(x)

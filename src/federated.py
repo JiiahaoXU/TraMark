@@ -8,10 +8,9 @@ import torch
 import random
 from torch.utils.data import DataLoader
 import torch.nn as nn
-from torch.nn.utils import parameters_to_vector
 import logging
 import argparse
-from utils import setup_logging, get_datasets, distribute_data_dirichlet, distribute_data, get_loss_n_accuracy, vector_to_model
+from utils import setup_logging, get_datasets, distribute_data_dirichlet, distribute_data
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -38,14 +37,13 @@ if __name__ == "__main__":
     
     parser.add_argument('--client_lr', type=float, default=0.01,
                         help='clients learning rate')
-
-    parser.add_argument('--server_lr', type=float, default=1,
-                        help='servers learning rate for signSGD')
     
     parser.add_argument('--snap', type=int, default=1,
                         help="do inference in every num of snap rounds")
+
     parser.add_argument('--device',  default=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
                         help="To use cuda, set to a specific GPU ID.")
+
     parser.add_argument('--num_workers', type=int, default=2, 
                         help="num of workers for multithreading")
 
@@ -53,9 +51,9 @@ if __name__ == "__main__":
 
     parser.add_argument('--debug', action='store_true', default=False)
 
-    parser.add_argument('--alpha',type=float, default=0.5)
+    parser.add_argument('--gamma',type=float, default=0.5)
 
-    parser.add_argument('--aggr', type=str, default='waffle', choices=['avg', 'tramark', 'tramark_w_warmup', 'waffle', 'fedtracker', 'test'],
+    parser.add_argument('--aggr', type=str, default='waffle', choices=['avg', 'tramark'],
                         help="aggregation function to aggregate agents' local weights")
     
     parser.add_argument('--lr_decay',type=float, default=0.99)
@@ -64,9 +62,12 @@ if __name__ == "__main__":
 
     parser.add_argument('--wd', type=float, default=1e-4)
 
-    parser.add_argument('--warmup_rounds', type=float, default=0.1)
+    parser.add_argument('--alpha', type=float, default=0.1)
 
     parser.add_argument('--seed', type=int, default=1)
+
+    parser.add_argument('--k', type=float, default=0.01)
+
 
 
     args = parser.parse_args()
@@ -111,14 +112,11 @@ if __name__ == "__main__":
 
     agents, agent_data_sizes = [], {}
     for _id in range(0, args.num_agents):
-        
         agent = Agent(_id, args, train_dataset, user_groups[_id])
         agent_data_sizes[_id] = agent.n_data
         agents.append(agent)
 
-    
-    n_model_params = len(parameters_to_vector([global_model.state_dict()[name] for name in global_model.state_dict()]))
-    aggregator = Aggregation(agent_data_sizes, args, n_model_params, global_model, val_loader)
+    aggregator = Aggregation(agent_data_sizes, args, global_model, val_loader)
 
     global_model_list = {}
     for i in range(args.num_agents):

@@ -1,5 +1,4 @@
 import copy
-# import logging
 
 import torch
 import numpy as np
@@ -60,7 +59,7 @@ def distribute_data_dirichlet(dataset, args):
             np.random.shuffle(idx_k)
             # using dirichlet distribution to determine the unbalanced proportion for each client (client_num in total)
             # e.g., when client_num = 4, proportions = [0.29543505 0.38414498 0.31998781 0.00043216], sum(proportions) = 1
-            proportions = np.random.dirichlet(np.repeat(args.alpha, client_num))
+            proportions = np.random.dirichlet(np.repeat(args.gamma, client_num))
 
             # get the index in idx_k according to the dirichlet distribution
             proportions = np.array([p * (len(idx_j) < N / client_num) for p, idx_j in zip(proportions, idx_batch)])
@@ -81,12 +80,6 @@ def distribute_data_dirichlet(dataset, args):
     for k in range(K):
         for i in dict_users:
             num[i][k] = len(np.intersect1d(dict_users[i], labels_dict[k]))
-    # logging.info(num)
-    # print(dict_users)
-    # def intersection(lst1, lst2):
-    #     lst3 = [value for value in lst1 if value in lst2]
-    #     return lst3
-    # client_label_num = [len(intersection (dict_users[i], dict_users[i+1] )) for i in range(args.num_agents)]
 
     for each_client, id_ in zip(num, range(len(num))):
         logging.info('client:%d, distribution: %s' % (id_, each_client))
@@ -132,16 +125,6 @@ def distribute_data(dataset, args, n_classes=10):
                 del labels_dict[j % n_classes][0]
                 class_ctr += 1
         np.random.shuffle(dict_users[user_idx])
-    # num = [ [ 0 for k in range(n_classes) ] for i in range(args.num_agents)]
-    # for k in range(n_classes):
-    #     for i in dict_users:
-    #         num[i][k] = len(np.intersect1d(dict_users[i], hey[k]))
-    # logging.info(num)
-    # logging.info(args.num_agents)
-    # def intersection(lst1, lst2):
-    #     lst3 = [value for value in lst1 if value in lst2]
-    #     return lst3
-    # logging.info( len(intersection (dict_users[0], dict_users[1] )))
 
     return dict_users
 
@@ -235,41 +218,6 @@ def get_datasets(data):
     return train_dataset, test_dataset
 
 
-def get_loss_n_accuracy(model, criterion, data_loader, args, round, num_classes=10):
-    """ Returns the loss and total accuracy, per class accuracy on the supplied data loader """
-
-    # disable BN stats during inference
-    model.eval()
-    total_loss, correctly_labeled_samples = 0, 0
-    confusion_matrix = torch.zeros(num_classes, num_classes)
-    not_correct_samples = []
-    # forward-pass to get loss and predictions of the current batch
-    all_labels = []
-
-    for _, (inputs, labels) in enumerate(data_loader):
-        inputs, labels = inputs.to(device=args.device, non_blocking=True), \
-                         labels.to(device=args.device, non_blocking=True)
-        # compute the total loss over minibatch
-        outputs = model(inputs)
-        avg_minibatch_loss = criterion(outputs, labels)
-
-        total_loss += avg_minibatch_loss.item() * outputs.shape[0]
-
-        # get num of correctly predicted inputs in the current batch
-        _, pred_labels = torch.max(outputs, 1)
-        pred_labels = pred_labels.view(-1)
-        all_labels.append(labels.cpu().view(-1))
-        correctly_labeled_samples += torch.sum(torch.eq(pred_labels, labels)).item()
-        # fill confusion_matrix
-        for t, p in zip(labels.view(-1), pred_labels.view(-1)):
-            confusion_matrix[t.long(), p.long()] += 1
-
-    avg_loss = total_loss / len(data_loader.dataset)
-    accuracy = correctly_labeled_samples / len(data_loader.dataset)
-    per_class_accuracy = confusion_matrix.diag() / confusion_matrix.sum(1)
-    return avg_loss, (accuracy, per_class_accuracy), not_correct_samples
-
-
 def vector_to_model(vec, model):
     # Pointer for slicing the vector for each parameter
     state_dict = model.state_dict()
@@ -334,14 +282,14 @@ def setup_logging(args):
     
     # Determine IID or non-IID configuration
     if args.non_iid:
-        iid_str = '%s_noniid(%.1f)' % (args.data, args.alpha)
+        iid_str = '%s_noniid(%.1f)' % (args.data, args.gamma)
     else:
         iid_str = '%s' % args.data
     
     file_name = f"{time_str}_seed_{args.seed}"
     
-    if args.aggr == 'tramark_w_warmup':
-        aggr = args.aggr + '_wuep_%.1f' % args.warmup_rounds
+    if args.aggr == 'tramark':
+        aggr = args.aggr + '_wuep_%.1f' % args.alpha
     else:
         aggr = args.aggr
     # Define directory paths
@@ -353,7 +301,7 @@ def setup_logging(args):
     os.makedirs(file_path, exist_ok=True)
     
     # Backup specified files
-    backup_files = ['aggregation.py', 'federated.py', 'agent.py', 'get_backdoor.py', 'models.py']
+    backup_files = ['aggregation.py', 'federated.py', 'agent.py', 'watermark_utils.py', 'models.py']
     for file in backup_files:
         copyfile(f'./{file}', os.path.join(file_path, file))
     
@@ -371,40 +319,3 @@ def setup_logging(args):
     # Log initial arguments
     logging.info(args)
     return dir_path
-
-
-def save_bn_params(model):
-    """
-    保存当前所有 BatchNorm 层的参数。
-    """
-    bn_params_backup = {}
-    for name, module in model.named_modules():
-        if isinstance(module, nn.BatchNorm2d):
-            bn_params_backup[name] = {
-                "running_mean": module.running_mean.clone().detach(),
-                "running_var": module.running_var.clone().detach(),
-                "weight": module.weight.clone().detach() if module.weight is not None else None,
-                "bias": module.bias.clone().detach() if module.bias is not None else None,
-            }
-
-    return bn_params_backup
-
-
-def rewind_bn_params(bn_params_backup, model):
-    """
-    将保存的 BatchNorm 参数恢复到模型。
-    """
-    # if self.bn_params_backup is None:
-    #     raise RuntimeError("BatchNorm parameters have not been saved. Call save_bn_params() first.")
-    
-    for name, module in model.named_modules():
-        if isinstance(module, nn.BatchNorm2d) and name in bn_params_backup:
-            bn_params = bn_params_backup[name]
-            module.running_mean.copy_(bn_params["running_mean"])
-            module.running_var.copy_(bn_params["running_var"])
-            if module.weight is not None and bn_params["weight"] is not None:
-                module.weight.data.copy_(bn_params["weight"])
-            if module.bias is not None and bn_params["bias"] is not None:
-                module.bias.data.copy_(bn_params["bias"])
-
-    return model
