@@ -27,3 +27,5 @@ node_modules
 data
 
 src/logs
+
+*.sh
